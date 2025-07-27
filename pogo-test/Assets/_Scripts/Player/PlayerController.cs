@@ -1,5 +1,6 @@
-using System.Collections;
-using System.Collections.Generic;
+// A simplified and reorganized version of your player controller
+// written in a beginner-friendly style, with clear comments
+
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -8,44 +9,43 @@ using UnityEngine.InputSystem;
 [RequireComponent(typeof(CharacterController))]
 public class PlayerController : MonoBehaviour
 {
-    [Header("Movement Settings")]
+    // Movement Settings
     public float moveSpeed = 12f;
     public float acceleration = 20f;
     public float gravity = -30f;
     public float jumpForce = 12f;
-    public float airControlMultiplier = 0.2f; // tweak to feel
+    public float airControlMultiplier = 0.2f;
 
-    [Header("References")]
+    // References
     public Transform orientation;
-
-    [HideInInspector] public float currentSpeed;
-    [HideInInspector] public CharacterController controller;
-
-    private PlayerInputActions input;
-    private Vector2 moveInput;
-    private Vector3 velocity;
-    private Vector3 currentMoveVelocity;
-    private bool isGrounded;
-    private bool jumpPressed;
-
-    [Header("Pogo Settings")]
-    public float pogoForce = 16f;
-    public float pogoCooldown = 0.1f;
-    public float maxPogoRange = 2f;
     public Transform cameraTransform;
+    public LayerMask pogoLayers;
 
-    private bool pogoPrimed;
-    private bool hasPogoed;
-    private float lastPogoTime = -999f;
-
+    // Pogo Settings
+    public float pogoForce = 16f;
+    public float maxPogoRange = 2f;
+    public float pogoCooldown = 0.1f;
     public float perfectWindow = 0.2f;
     public float perfectBoost = 1.5f;
 
-    private float pogoPressTime = -999f;
+    // Internal State
+    public CharacterController controller;
+    private PlayerInputActions input;
 
+    private Vector2 moveInput;
+    private Vector3 currentMoveVelocity;
+    private Vector3 velocity;
+
+    private bool isGrounded;
+    private bool jumpPressed;
+    private bool pogoPrimed;
+    private bool hasPogoed;
+
+    private float lastPogoTime = -999f;
+    private float pogoPressTime = -999f;
     private float timeSinceLeftGround = 999f;
 
-    public LayerMask pogoLayers;
+    public float currentSpeed;
 
     void Awake()
     {
@@ -59,130 +59,121 @@ public class PlayerController : MonoBehaviour
         input.Player.Move.performed += ctx => moveInput = ctx.ReadValue<Vector2>();
         input.Player.Move.canceled += ctx => moveInput = Vector2.zero;
         input.Player.Jump.performed += _ => jumpPressed = true;
-        input.Player.Pogo.performed += _ =>
-        {
+        input.Player.Pogo.performed += _ => {
             pogoPrimed = true;
             pogoPressTime = Time.time;
         };
-
         input.Player.Pogo.canceled += _ => pogoPrimed = false;
     }
 
-    void OnDisable() => input.Disable();
+    void OnDisable()
+    {
+        input.Disable();
+    }
 
     void Update()
     {
+        // Check if grounded
         isGrounded = controller.isGrounded;
+        timeSinceLeftGround = isGrounded ? 0f : timeSinceLeftGround + Time.deltaTime;
 
-        if (isGrounded)
-            timeSinceLeftGround = 0f;
-        else
-            timeSinceLeftGround += Time.deltaTime;
-
+        // Reset pogo state on landing
         if (isGrounded && hasPogoed)
         {
             hasPogoed = false;
         }
 
+        TryPerfectPogo();
+        TryNormalPogo();
+        ApplyGravityAndJump();
+        DampHorizontalVelocityIfGrounded();
+        HandleMovementInput();
+
+        // Apply Final Movement
+        controller.Move(currentMoveVelocity * Time.deltaTime);
+        controller.Move(velocity * Time.deltaTime);
+
+        currentSpeed = currentMoveVelocity.magnitude;
+    }
+
+    void TryPerfectPogo()
+    {
         bool canPerfectPogo = timeSinceLeftGround > 0.05f && Time.time - pogoPressTime <= perfectWindow;
 
         if (canPerfectPogo)
         {
-            Vector3 rayOrigin = cameraTransform.position;
-            Vector3 rayDirection = cameraTransform.forward;
-
-            if (Physics.Raycast(rayOrigin, rayDirection, out RaycastHit hit, maxPogoRange, pogoLayers, QueryTriggerInteraction.Ignore))
+            if (Physics.Raycast(cameraTransform.position, cameraTransform.forward, out RaycastHit hit, maxPogoRange, pogoLayers))
             {
-                Debug.Log($"Perfect Pogo Check: grounded={isGrounded}, hit={hit.collider.name}, distance={hit.distance}");
+                if (hit.distance < 0.3f) return; // Too close to be considered midair
 
-                // Optional: prevent pogo if ray hit is very close
-                if (hit.distance < 0.3f)
-                {
-                    Debug.Log("Skipped perfect pogo: too close to surface (probably grounded)");
-                    return;
-                }
-
-                Debug.DrawLine(rayOrigin, hit.point, Color.yellow, 1f);
-                Debug.DrawRay(hit.point, hit.normal * 0.5f, Color.magenta, 1f);
-
-                Vector3 baseDir = -rayDirection.normalized;
+                Vector3 baseDir = -cameraTransform.forward.normalized;
                 Vector3 surfaceNormal = hit.normal;
-                Vector3 blended = (baseDir * 0.8f + surfaceNormal * 0.2f).normalized;
+                Vector3 bounceDir = (baseDir * 0.8f + surfaceNormal * 0.2f).normalized;
 
-                velocity = blended * pogoForce * perfectBoost;
-
-                hasPogoed = true;
+                velocity = bounceDir * pogoForce * perfectBoost;
                 lastPogoTime = Time.time;
-                pogoPressTime = -999f; // prevent repeat perfects
-
-                Debug.Log("Perfect Pogo Performed");
+                pogoPressTime = -999f;
+                hasPogoed = true;
             }
         }
+    }
 
-        if (pogoPrimed && Time.time - lastPogoTime > pogoCooldown)
+    void TryNormalPogo()
+    {
+        bool canPogo = pogoPrimed && Time.time - lastPogoTime > pogoCooldown;
+
+        if (canPogo)
         {
-            Vector3 rayOrigin = cameraTransform.position;
-            Vector3 rayDirection = cameraTransform.forward;
-
-            if (Physics.Raycast(rayOrigin, rayDirection, out RaycastHit hit, maxPogoRange, pogoLayers, QueryTriggerInteraction.Ignore))
+            if (Physics.Raycast(cameraTransform.position, cameraTransform.forward, out RaycastHit hit, maxPogoRange, pogoLayers))
             {
-                Debug.Log($"Pogo Hit: {hit.collider.name}");
-                Debug.DrawLine(rayOrigin, hit.point, Color.green, 1f);
-                Debug.DrawRay(hit.point, hit.normal * 0.5f, Color.cyan, 1f);
-
-                Vector3 baseDir = -rayDirection.normalized;
+                Vector3 baseDir = -cameraTransform.forward.normalized;
                 Vector3 surfaceNormal = hit.normal;
-                Vector3 blended = (baseDir * 0.8f + surfaceNormal * 0.2f).normalized;
+                Vector3 bounceDir = (baseDir * 0.8f + surfaceNormal * 0.2f).normalized;
 
-                velocity = blended * pogoForce;
-
+                velocity = bounceDir * pogoForce;
                 lastPogoTime = Time.time;
-
                 hasPogoed = true;
             }
         }
+    }
 
+    void ApplyGravityAndJump()
+    {
         if (!isGrounded)
         {
             velocity.y += gravity * Time.deltaTime;
         }
-        else if (velocity.y < 0)
+        else if (velocity.y < 0f)
         {
-            velocity.y = -2f; // Stick to ground
+            velocity.y = -2f;
             if (jumpPressed)
             {
                 velocity.y = jumpForce;
                 jumpPressed = false;
             }
         }
+    }
 
-        // Smoothly decelerate pogo momentum when grounded
+    void DampHorizontalVelocityIfGrounded()
+    {
         if (isGrounded && Time.time - lastPogoTime > 0.05f)
         {
-            Vector3 horizontalVel = new Vector3(velocity.x, 0f, velocity.z);
-            horizontalVel = Vector3.Lerp(horizontalVel, Vector3.zero, Time.deltaTime * 5f);
-            velocity.x = horizontalVel.x;
-            velocity.z = horizontalVel.z;
+            Vector3 horizontal = new Vector3(velocity.x, 0f, velocity.z);
+            horizontal = Vector3.Lerp(horizontal, Vector3.zero, Time.deltaTime * 5f);
+            velocity.x = horizontal.x;
+            velocity.z = horizontal.z;
         }
+    }
 
-        // Movement input
-        Vector3 targetMove = (orientation.right * moveInput.x + orientation.forward * moveInput.y).normalized;
-        float controlFactor = 1f;
-        if (!isGrounded)
-        {
-            controlFactor = hasPogoed ? airControlMultiplier : 1f;
-        }
+    void HandleMovementInput()
+    {
+        Vector3 target = (orientation.right * moveInput.x + orientation.forward * moveInput.y).normalized;
+        float control = (!isGrounded && hasPogoed) ? airControlMultiplier : 1f;
 
         currentMoveVelocity = Vector3.Lerp(
             currentMoveVelocity,
-            targetMove * moveSpeed * controlFactor,
+            target * moveSpeed * control,
             acceleration * Time.deltaTime
         );
-
-        controller.Move(currentMoveVelocity * Time.deltaTime);
-        controller.Move(velocity * Time.deltaTime);
-
-        currentSpeed = currentMoveVelocity.magnitude;
     }
 }
-

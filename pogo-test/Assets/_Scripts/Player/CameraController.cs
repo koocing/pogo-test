@@ -1,3 +1,6 @@
+// Simplified and beginner-friendly version of CameraController
+// Includes clear comments and organization
+
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -5,16 +8,17 @@ using UnityEngine.InputSystem;
 
 public class CameraController : MonoBehaviour
 {
+    [Header("Look Settings")]
     public Transform orientation;
+    public Transform cameraTarget; // The camera to bob
     public float sensitivity = 1.5f;
     public float rollIntensity = 10f;
     public float rollSpeed = 5f;
-    public Transform cameraTarget; // Assign the actual camera
 
     [Header("Headbob Settings")]
     public float bobFrequency = 8f;
     public float bobAmplitude = 0.05f;
-    public float speedThreshold = 0.1f;
+    public float speedThreshold = 0.1f; // Min speed to trigger bob
 
     private PlayerInputActions input;
     private Vector2 lookInput;
@@ -22,7 +26,7 @@ public class CameraController : MonoBehaviour
     private float bobTimer;
     private Vector3 cameraStartLocalPos;
 
-    private PlayerController player;
+    private PlayerController player; // Reference to PlayerController
 
     void Awake()
     {
@@ -38,7 +42,10 @@ public class CameraController : MonoBehaviour
         input.Player.Look.canceled += _ => lookInput = Vector2.zero;
     }
 
-    void OnDisable() => input.Disable();
+    void OnDisable()
+    {
+        input.Disable();
+    }
 
     void Start()
     {
@@ -48,6 +55,12 @@ public class CameraController : MonoBehaviour
 
     void Update()
     {
+        HandleMouseLook();
+        HandleHeadbob();
+    }
+
+    void HandleMouseLook()
+    {
         float mouseX = lookInput.x * sensitivity;
         float mouseY = lookInput.y * sensitivity;
 
@@ -55,14 +68,16 @@ public class CameraController : MonoBehaviour
         pitch = Mathf.Clamp(pitch, -90f, 90f);
 
         orientation.Rotate(Vector3.up * mouseX);
-        transform.localRotation = Quaternion.Euler(pitch, 0f, Mathf.LerpAngle(transform.localEulerAngles.z, -mouseX * rollIntensity, Time.deltaTime * rollSpeed));
 
-        HandleHeadbob();
+        float targetRoll = -mouseX * rollIntensity;
+        float currentRoll = Mathf.LerpAngle(transform.localEulerAngles.z, targetRoll, Time.deltaTime * rollSpeed);
+
+        transform.localRotation = Quaternion.Euler(pitch, 0f, currentRoll);
     }
 
     void HandleHeadbob()
     {
-        if (player.currentSpeed > speedThreshold && player.controller.isGrounded)
+        if (player != null && player.controller.isGrounded && player.currentSpeed > speedThreshold)
         {
             bobTimer += Time.deltaTime * bobFrequency;
             float bobOffset = Mathf.Sin(bobTimer) * bobAmplitude;
